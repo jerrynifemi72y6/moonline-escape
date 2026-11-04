@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0a1026" />
+<title>Moonline Escape</title>
+<link rel="stylesheet" href="/src/style.css" />
+<script>
+window.addEventListener('error', function (e) {
+  document.title = 'JSERR: ' + (e.message || '') + ' @ ' + (e.filename || '').split('/').pop() + ':' + (e.lineno || '');
+});
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud">
+  <div class="pill"><span>DIST</span><b id="hudDistance">0 m</b></div>
+  <div class="pill"><span>CELLS</span><b id="hudCells">0</b></div>
+  <div class="pill score"><span>SCORE</span><b id="hudScore">0</b></div>
+</div>
+
+<div id="startScreen" class="screen">
+  <div class="card">
+    <p class="kicker">NEON CITY · SECURITY BLACKOUT</p>
+    <h1>MOONLINE<br />ESCAPE</h1>
+    <p class="sub">Run the moonlit rails. Grab the cells. Don't get caught.</p>
+    <ul class="hints">
+      <li>Swipe left / right to change lane</li>
+      <li>Swipe up to jump</li>
+      <li>Swipe down to slide</li>
+    </ul>
+    <button id="playBtn">PLAY</button>
+  </div>
+</div>
+
+<div id="overScreen" class="screen hidden">
+  <div class="card">
+    <p class="kicker">RUN ENDED</p>
+    <h2>CAUGHT</h2>
+    <div id="overStats" class="stats"></div>
+    <button id="againBtn">PLAY AGAIN</button>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

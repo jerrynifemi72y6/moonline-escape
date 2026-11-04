@@ -1,0 +1,41 @@
+name: Build Android APK
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'index.html'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build web app
+        run: npm run build
+      - name: Sync Capacitor
+        run: npx cap sync android
+      - name: Build APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: moonline-escape-apk
+          path: android/app/build/outputs/apk/debug/*.apk

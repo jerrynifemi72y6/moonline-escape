@@ -1,0 +1,6 @@
+{
+  "appId": "com.jerry.moonlineescape",
+  "appName": "Moonline Escape",
+  "webDir": "dist",
+  "android": { "backgroundColor": "#0a1026", "allowMixedContent": true }
+}
