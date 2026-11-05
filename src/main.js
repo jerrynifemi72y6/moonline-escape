@@ -121,6 +121,7 @@ function resetRun() {
 
   camYaw = player.yaw;
   activeSeg = null;
+  cornersTaken = 0;
   speed = BASE_SPEED;
   distance = 0;
   cellCount = 0;
@@ -427,7 +428,7 @@ function updateCamera(dt, worldPos, yaw) {
   let diff = yaw - camYaw;
   while (diff > Math.PI) diff -= Math.PI * 2;
   while (diff < -Math.PI) diff += Math.PI * 2;
-  camYaw += diff * Math.min(1, dt * 7);
+  camYaw += diff * Math.min(1, dt * 10);
 
   const speedRatio = THREE.MathUtils.clamp((speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED), 0, 1);
   const back = 6.8 + speedRatio * 0.9;

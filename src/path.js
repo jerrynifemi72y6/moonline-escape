@@ -208,25 +208,39 @@ function buildSegment(scene, seg, container, rng) {
     }
   }
 
-  // ---- corner: dead-end wall + chevrons pointing the way out
+  // ---- corner: low parapet + floating chevrons (kept low so the chase
+  // camera can swing through the bend without clipping into geometry)
   if (seg.turn) {
-    const wall = new THREE.Mesh(box(CORRIDOR_W + 1.6, 5.2, 0.7), mat(0x1c2450));
-    wall.position.set(0, 2.6, -len - 0.3);
-    g.add(wall);
+    const parapet = new THREE.Mesh(box(CORRIDOR_W + 1.6, 1.0, 0.5), mat(0x1c2450));
+    parapet.position.set(0, 0.5, -len - 0.2);
+    g.add(parapet);
 
-    const stripe = new THREE.Mesh(box(CORRIDOR_W + 1.2, 0.22, 0.12), glow(0xff2e88));
-    stripe.position.set(0, 2.4, -len + 0.1);
+    const stripe = new THREE.Mesh(box(CORRIDOR_W + 1.2, 0.18, 0.1), glow(0xff2e88));
+    stripe.position.set(0, 1.0, -len + 0.05);
     g.add(stripe);
 
-    const signColor = 0x00e5ff;
+    // chevrons float above the parapet, pointing into the turn
     for (let i = 0; i < 3; i++) {
-      const chev = new THREE.Mesh(box(1.5, 1.5, 0.14), glow(signColor));
-      chev.position.set(0, 3.3, -len + 0.4);
+      const chev = new THREE.Mesh(box(1.4, 1.4, 0.12), glow(0x00e5ff));
+      chev.position.set(
+        (seg.turn === 'left' ? -1 : 1) * (1.0 + i * 1.5),
+        2.3 + i * 0.15,
+        -len + 0.3
+      );
       chev.rotation.z = Math.PI / 4;
-      chev.scale.setScalar(1 - i * 0.18);
-      chev.position.x = (seg.turn === 'left' ? -1 : 1) * (1.2 + i * 1.5);
+      chev.scale.setScalar(1 - i * 0.16);
       g.add(chev);
     }
+
+    // guide rail sweeping into the turn so the corner direction reads instantly
+    const guide = new THREE.Mesh(box(0.14, 0.12, 7), glow(seg.turn === 'left' ? 0xff2e88 : 0x8cff00));
+    guide.position.set(
+      (seg.turn === 'left' ? -1 : 1) * (CORRIDOR_W / 2 - 0.2),
+      0.1,
+      -len + 3.4
+    );
+    guide.rotation.y = (seg.turn === 'left' ? -1 : 1) * 0.6;
+    g.add(guide);
   }
 
   // ---- obstacles (kept clear of the turn zone)
