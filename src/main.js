@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { createPath, LANE_X } from './path.js';
 import { createCourier, animateCourier } from './courier.js';
+import { buildSky } from './sky.js';
 
 // ---------------------------------------------------------------- renderer
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a1026);
-scene.fog = new THREE.Fog(0x0a1026, 50, 135);
+scene.fog = new THREE.Fog(0x241546, 60, 190);
+buildSky(scene);
 
 const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 320);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -257,15 +259,14 @@ document.getElementById('againBtn').addEventListener('click', startRun);
 function autopilot() {
   for (const sg of path.segments) {
     for (const obs of sg.obstacles) {
-      const gap = obs.s - player.s;
-      if (gap < 1) continue;
-      if (obs.lane === player.lane) {
-        if (obs.type === 'barrier' && gap < 7.5) { jump(); return; }
-        if (obs.type === 'gate' && gap < 7) { slide(); return; }
-        if (obs.type === 'block' && gap < 26) {
-          const free = [0, 2, 1].find((l) => l !== obs.lane);
-          if (free !== undefined) { moveLane(free > player.lane ? 1 : -1); return; }
-        }
+      const gap = obs.from - player.s;
+      if (gap < 1 || gap > 34) continue;
+      if (obs.lane !== player.lane) continue;
+      if (obs.type === 'barrier' && gap < 8) { jump(); return; }
+      if (obs.type === 'gate' && gap < 7) { slide(); return; }
+      if (gap < 28) {
+        const free = [0, 2, 1].find((l) => l !== obs.lane);
+        if (free !== undefined) { moveLane(free > player.lane ? 1 : -1); return; }
       }
     }
   }
@@ -276,8 +277,8 @@ const clock = new THREE.Clock();
 
 function collides(obs) {
   if (obs.lane !== player.lane) return false;
-  if (Math.abs(obs.s - player.s) > 1.7) return false;
-  if (obs.type === 'barrier') return player.y < 1.02;
+  if (player.s < obs.from - 0.5 || player.s > obs.to + 0.5) return false;
+  if (obs.type === 'barrier') return player.y < 1.05;
   if (obs.type === 'gate') return !(player.sliding && player.y < 0.45);
   return true;
 }
@@ -376,7 +377,7 @@ function updateRun(dt) {
   // ---- obstacle collision
   for (const sg of path.segments) {
     for (const obs of sg.obstacles) {
-      if (Math.abs(obs.s - player.s) > 2) continue;
+      if (player.s < obs.from - 2 || player.s > obs.to + 2) continue;
       if (collides(obs)) {
         endRun();
         return;
@@ -402,8 +403,7 @@ function updateRun(dt) {
   for (const sg of path.segments) {
     for (const c of sg.cells) {
       if (!c.taken) {
-        c.mesh.rotation.y = t * 2.2;
-        c.mesh.rotation.x = t * 0.9;
+        c.mesh.rotation.z = t * 3.0;
       }
     }
   }

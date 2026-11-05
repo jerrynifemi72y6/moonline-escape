@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
-export const LANE_W = 2.4;
+export const LANE_W = 2.6;
 export const LANE_X = [-LANE_W, 0, LANE_W];
-export const CORRIDOR_W = 9.6;
+export const CORRIDOR_W = 8.6;
 
 const HALF = Math.PI / 2;
 
@@ -14,24 +14,6 @@ function rightFor(yaw) {
   return new THREE.Vector3(Math.cos(yaw), 0, Math.sin(yaw));
 }
 
-const geoCache = {};
-function box(w, h, d) {
-  const k = `${w.toFixed(2)}_${h.toFixed(2)}_${d.toFixed(2)}`;
-  if (!geoCache[k]) geoCache[k] = new THREE.BoxGeometry(w, h, d);
-  return geoCache[k];
-}
-const matCache = {};
-function mat(color) {
-  if (!matCache[color]) matCache[color] = new THREE.MeshLambertMaterial({ color });
-  return matCache[color];
-}
-const glowCache = {};
-function glow(color) {
-  if (!glowCache[color]) glowCache[color] = new THREE.MeshBasicMaterial({ color });
-  return glowCache[color];
-}
-
-// seeded rng so a segment always looks the same once built
 function makeRng(seed) {
   let s = seed % 2147483647;
   if (s <= 0) s += 2147483646;
@@ -41,7 +23,60 @@ function makeRng(seed) {
   };
 }
 
-// ---------------------------------------------------------------- path system
+/**
+ * Batches many boxes into one geometry so a whole city block costs a single
+ * draw call. Essential for keeping an Infinix Note 8 comfortably above 30fps.
+ */
+class Batcher {
+  constructor() {
+    this.pos = [];
+    this.norm = [];
+    this.col = [];
+    this.idx = [];
+    this.vertCount = 0;
+    this.c = new THREE.Color();
+  }
+
+  box(cx, cy, cz, sx, sy, sz, color) {
+    this.c.set(color);
+    const r = this.c.r, g = this.c.g, b = this.c.b;
+    const hx = sx / 2, hy = sy / 2, hz = sz / 2;
+    const faces = [
+      [[1, 0, 0], [[hx, -hy, hz], [hx, -hy, -hz], [hx, hy, -hz], [hx, hy, hz]]],
+      [[-1, 0, 0], [[-hx, -hy, -hz], [-hx, -hy, hz], [-hx, hy, hz], [-hx, hy, -hz]]],
+      [[0, 1, 0], [[-hx, hy, -hz], [hx, hy, -hz], [hx, hy, hz], [-hx, hy, hz]]],
+      [[0, -1, 0], [[-hx, -hy, hz], [hx, -hy, hz], [hx, -hy, -hz], [-hx, -hy, -hz]]],
+      [[0, 0, 1], [[-hx, -hy, hz], [-hx, hy, hz], [hx, hy, hz], [hx, -hy, hz]]],
+      [[0, 0, -1], [[hx, -hy, -hz], [hx, hy, -hz], [-hx, hy, -hz], [-hx, -hy, -hz]]],
+    ];
+
+    for (const [n, verts] of faces) {
+      const base = this.vertCount;
+      for (const v of verts) {
+        this.pos.push(cx + v[0], cy + v[1], cz + v[2]);
+        this.norm.push(n[0], n[1], n[2]);
+        this.col.push(r, g, b);
+        this.vertCount++;
+      }
+      this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+  }
+
+  build(material) {
+    if (!this.vertCount) return null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(this.norm, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    geo.setIndex(this.idx);
+    return new THREE.Mesh(geo, material);
+  }
+}
+
+const litMaterial = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+const glowMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: true });
+
+// ---------------------------------------------------------------- path
 export function createPath(scene, startS = 0) {
   const segments = [];
   const container = new THREE.Group();
@@ -50,15 +85,14 @@ export function createPath(scene, startS = 0) {
   let cursorS = startS;
   let yaw = 0;
   let origin = new THREE.Vector3(0, 0, 0);
-  let rngSeed = 20261;
+  let rngSeed = 77213;
   let sinceTurn = 0;
 
   function addSegment() {
     const rng = makeRng(rngSeed++);
-    const len = 70 + Math.floor(rng() * 45);
+    const len = 68 + Math.floor(rng() * 36);
     sinceTurn++;
-    // first few segments run straight so the player can settle in
-    const wantTurn = sinceTurn >= 2 && rng() < 0.85;
+    const wantTurn = sinceTurn >= 2 && rng() < 0.9;
     const turn = wantTurn ? (rng() < 0.5 ? 'left' : 'right') : null;
     if (wantTurn) sinceTurn = 0;
 
@@ -76,27 +110,24 @@ export function createPath(scene, startS = 0) {
     buildSegment(scene, seg, container, rng);
     segments.push(seg);
 
-    // advance path cursor
     cursorS += len;
     const d = dirFor(yaw);
     origin = origin.clone().addScaledVector(d, len);
     if (turn === 'left') yaw -= HALF;
     if (turn === 'right') yaw += HALF;
-
-    return seg;
   }
 
   return {
     segments,
-    ensureAhead(playerS, ahead = 260) {
+    ensureAhead(playerS, ahead = 280) {
       while (cursorS < playerS + ahead) addSegment();
     },
     prune(playerS) {
       for (let i = segments.length - 1; i >= 0; i--) {
         const seg = segments[i];
-        if (seg.startS + seg.len < playerS - 60) {
+        if (seg.startS + seg.len < playerS - 70) {
           container.remove(seg.group);
-          disposeTree(seg.group);
+          seg.group.clear();
           segments.splice(i, 1);
         }
       }
@@ -107,7 +138,6 @@ export function createPath(scene, startS = 0) {
       }
       return segments[segments.length - 1];
     },
-    // world position for a point on the path
     positionAt(s, laneX, y = 0) {
       const seg = this.segmentAt(s);
       const local = s - seg.startS;
@@ -125,166 +155,221 @@ export function createPath(scene, startS = 0) {
     reset() {
       for (const seg of segments) {
         container.remove(seg.group);
-        disposeTree(seg.group);
+        seg.group.clear();
       }
       segments.length = 0;
       cursorS = 0;
       yaw = 0;
       origin = new THREE.Vector3(0, 0, 0);
-      rngSeed = 20261;
+      rngSeed = 77213;
       sinceTurn = 0;
     },
   };
 }
 
-function disposeTree(obj) {
-  // geometries/materials are shared via caches, so only detach
-  obj.clear();
-}
-
-// ---------------------------------------------------------------- segment build
-const OBSTACLE_SPECS = {
-  barrier: { w: 1.7, h: 1.05, d: 1.0, color: 0xff2e88, y: 0.52 },
-  gate: { w: 2.1, h: 1.5, d: 0.5, color: 0xffb02e, y: 2.25 },
-  block: { w: 2.1, h: 2.7, d: 1.4, color: 0x2b3566, y: 1.35 },
-};
+// ---------------------------------------------------------------- segment
+const BUILDING_COLORS = [0x1a1f3d, 0x232a52, 0x171b33, 0x2b2350, 0x1d2a4d];
+const WINDOW_COLORS = [0xffd9a0, 0xfff1c4, 0x9fe8ff, 0xffb3e6, 0xb8ffe0];
 
 function buildSegment(scene, seg, container, rng) {
   const g = seg.group;
   const len = seg.len;
 
-  // place group at segment origin with its yaw
   g.position.copy(seg.origin);
-  g.rotation.y = Math.atan2(Math.sin(seg.yaw), -Math.cos(seg.yaw)) + Math.PI;
+  g.rotation.y = -seg.yaw;
   container.add(g);
 
-  // ---- deck
-  const deck = new THREE.Mesh(box(CORRIDOR_W + 1.6, 0.5, len + 8), mat(0x141a33));
-  deck.position.set(0, -0.25, -len / 2);
-  g.add(deck);
+  const lit = new Batcher();   // lambert-shaded geometry
+  const glow = new Batcher();  // self-lit neon
 
-  // ---- edge rails
-  for (const sx of [-(CORRIDOR_W / 2), CORRIDOR_W / 2]) {
-    const rail = new THREE.Mesh(box(0.16, 0.07, len), glow(0x00e5ff));
-    rail.position.set(sx, 0.06, -len / 2);
-    g.add(rail);
+  // ---------- track bed
+  lit.box(0, -0.35, -len / 2, CORRIDOR_W + 5.5, 0.7, len + 10, 0x0e1226);
+
+  // gravel between rails
+  lit.box(0, -0.02, -len / 2, CORRIDOR_W + 1.2, 0.08, len, 0x1a1f30);
+
+  // sleepers
+  for (let z = 0; z < len; z += 2.6) {
+    lit.box(0, 0.06, -z, CORRIDOR_W + 0.6, 0.12, 0.55, 0x2a2318);
   }
 
-  // ---- lane dashes
-  for (const dx of [-LANE_W / 2, LANE_W / 2]) {
-    for (let z = 4; z < len; z += 6) {
-      const dash = new THREE.Mesh(box(0.09, 0.02, 2.4), glow(0xffb02e));
-      dash.position.set(dx, 0.03, -z);
-      g.add(dash);
+  // rails for each lane
+  for (const lx of LANE_X) {
+    for (const off of [-0.72, 0.72]) {
+      lit.box(lx + off, 0.14, -len / 2, 0.12, 0.14, len, 0x8b93a8);
+      glow.box(lx + off, 0.22, -len / 2, 0.05, 0.03, len, 0x2be8ff);
     }
   }
 
-  // ---- pylons below the deck
-  for (let z = 6; z < len; z += 22) {
-    for (const sx of [-4.6, 4.6]) {
-      const p = new THREE.Mesh(box(0.7, 26, 0.7), mat(0x0d1226));
-      p.position.set(sx, -13.5, -z);
-      g.add(p);
-    }
+  // platform edges
+  for (const sx of [-1, 1]) {
+    const px = sx * (CORRIDOR_W / 2 + 2.2);
+    lit.box(px, 0.45, -len / 2, 3.6, 0.9, len, 0x161a2e);
+    glow.box(px - sx * 1.8, 1.0, -len / 2, 0.12, 0.1, len, 0xff2e88);
   }
 
-  // ---- city blocks on both sides
-  for (let z = 0; z < len; z += 12) {
+  // ---------- city
+  for (let z = 0; z < len; z += 13) {
     for (const side of [-1, 1]) {
-      if (rng() > 0.62) continue;
-      const h = 10 + rng() * 34;
-      const w = 5 + rng() * 7;
-      const b = new THREE.Mesh(box(w, h, w), mat(rng() < 0.5 ? 0x0b1130 : 0x111a3d));
-      b.position.set(side * (9 + rng() * 20), h / 2 - 12, -z - rng() * 6);
-      g.add(b);
+      if (rng() > 0.75) continue;
+      const dist = 12 + rng() * 24;
+      const w = 6 + rng() * 9;
+      const h = 14 + rng() * 46;
+      const bx = side * dist;
+      const bz = -z - rng() * 8;
+      const color = BUILDING_COLORS[Math.floor(rng() * BUILDING_COLORS.length)];
 
-      // neon band on the facade
-      if (rng() < 0.5) {
-        const bandColor = rng() < 0.5 ? 0xff2e88 : 0x00e5ff;
-        const band = new THREE.Mesh(box(w * 0.96, 0.3, 0.16), glow(bandColor));
-        band.position.set(b.position.x, b.position.y + h * 0.22, b.position.z + w / 2 + 0.1);
-        g.add(band);
+      lit.box(bx, h / 2 - 1, bz, w, h, w, color);
+
+      // roof edge neon
+      if (rng() < 0.45) {
+        const neon = rng() < 0.5 ? 0x00e5ff : 0xff2e88;
+        glow.box(bx, h - 1, bz, w * 1.02, 0.35, w * 1.02, neon);
+      }
+
+      // lit floor bands facing the track
+      const bands = 3 + Math.floor(rng() * 4);
+      for (let b = 0; b < bands; b++) {
+        const by = 3 + rng() * (h - 6);
+        const wc = WINDOW_COLORS[Math.floor(rng() * WINDOW_COLORS.length)];
+        glow.box(
+          bx - side * (w / 2 + 0.05),
+          by,
+          bz,
+          0.12,
+          0.9,
+          w * (0.55 + rng() * 0.4),
+          wc
+        );
+      }
+
+      // vertical signboard
+      if (rng() < 0.3) {
+        const signColor = [0x00e5ff, 0xff2e88, 0xffb02e, 0x8cff00][Math.floor(rng() * 4)];
+        glow.box(bx - side * (w / 2 + 0.2), h * 0.6, bz + w * 0.3, 0.2, h * 0.35, 1.4, signColor);
       }
     }
   }
 
-  // ---- corner: low parapet + floating chevrons (kept low so the chase
-  // camera can swing through the bend without clipping into geometry)
+  // ---------- overhead gantries
+  for (let z = 14; z < len; z += 34) {
+    for (const sx of [-1, 1]) {
+      lit.box(sx * (CORRIDOR_W / 2 + 4.2), 3.6, -z, 0.6, 7.2, 0.6, 0x222a45);
+    }
+    lit.box(0, 7.1, -z, CORRIDOR_W + 9.6, 0.55, 0.55, 0x2a3454);
+    for (const lx of LANE_X) {
+      glow.box(lx, 6.75, -z, 1.5, 0.18, 0.3, 0xfff0c0);
+    }
+  }
+
+  // ---------- platform lamps
+  for (let z = 8; z < len; z += 18) {
+    for (const sx of [-1, 1]) {
+      const px = sx * (CORRIDOR_W / 2 + 1.4);
+      lit.box(px, 2.2, -z, 0.16, 4.4, 0.16, 0x2b3350);
+      glow.box(px, 4.5, -z, 0.7, 0.24, 0.7, 0xfff2c8);
+    }
+  }
+
+  // ---------- corner: parapet, chevrons, guide rail
   if (seg.turn) {
-    const parapet = new THREE.Mesh(box(CORRIDOR_W + 1.6, 1.0, 0.5), mat(0x1c2450));
-    parapet.position.set(0, 0.5, -len - 0.2);
-    g.add(parapet);
+    lit.box(0, 0.55, -len - 0.2, CORRIDOR_W + 5.5, 1.1, 0.6, 0x1c2450);
+    glow.box(0, 1.12, -len + 0.1, CORRIDOR_W + 5.2, 0.16, 0.12, 0xff2e88);
 
-    const stripe = new THREE.Mesh(box(CORRIDOR_W + 1.2, 0.18, 0.1), glow(0xff2e88));
-    stripe.position.set(0, 1.0, -len + 0.05);
-    g.add(stripe);
-
-    // chevrons float above the parapet, pointing into the turn
     for (let i = 0; i < 3; i++) {
-      const chev = new THREE.Mesh(box(1.4, 1.4, 0.12), glow(0x00e5ff));
-      chev.position.set(
-        (seg.turn === 'left' ? -1 : 1) * (1.0 + i * 1.5),
-        2.3 + i * 0.15,
-        -len + 0.3
+      glow.box(
+        (seg.turn === 'left' ? -1 : 1) * (1.2 + i * 1.6),
+        2.4 + i * 0.12,
+        -len + 0.35,
+        1.35,
+        1.35,
+        0.14,
+        i === 0 ? 0x00e5ff : 0x00b8d4
       );
-      chev.rotation.z = Math.PI / 4;
-      chev.scale.setScalar(1 - i * 0.16);
-      g.add(chev);
     }
 
-    // guide rail sweeping into the turn so the corner direction reads instantly
-    const guide = new THREE.Mesh(box(0.14, 0.12, 7), glow(seg.turn === 'left' ? 0xff2e88 : 0x8cff00));
-    guide.position.set(
-      (seg.turn === 'left' ? -1 : 1) * (CORRIDOR_W / 2 - 0.2),
-      0.1,
-      -len + 3.4
-    );
-    guide.rotation.y = (seg.turn === 'left' ? -1 : 1) * 0.6;
-    g.add(guide);
+    const guideColor = seg.turn === 'left' ? 0xff2e88 : 0x8cff00;
+    glow.box((seg.turn === 'left' ? -1 : 1) * (CORRIDOR_W / 2 - 0.3), 0.2, -len + 3.6, 0.16, 0.14, 7, guideColor);
   }
 
-  // ---- obstacles (kept clear of the turn zone)
-  const safeStart = 22;
-  const safeEnd = seg.turn ? len - 16 : len - 6;
+  // ---------- obstacles + trains + coins
+  const safeStart = 24;
+  const safeEnd = seg.turn ? len - 18 : len - 8;
   let z = safeStart;
+
   while (z < safeEnd) {
-    const roll = rng();
     const freeLane = Math.floor(rng() * 3);
-    const maxCount = rng() < 0.5 ? 2 : 1;
-    const lanes = [0, 1, 2].filter((l) => l !== freeLane).slice(0, maxCount);
+    const laneSet = [0, 1, 2].filter((l) => l !== freeLane);
+    const placed = [];
+    const roll = rng();
 
-    for (const lane of lanes) {
-      const t = roll < 0.42 ? 'barrier' : roll < 0.76 ? 'gate' : 'block';
-      const spec = OBSTACLE_SPECS[t];
-      const m = new THREE.Mesh(box(spec.w, spec.h, spec.d), mat(spec.color));
-      m.position.set(LANE_X[lane], spec.y, -z);
-      g.add(m);
+    if (roll < 0.3) {
+      // ---- parked train: long, unmissable, must change lane
+      const lane = laneSet[Math.floor(rng() * laneSet.length)];
+      const trainLen = 16 + rng() * 10;
+      const trainZ = -z;
+      const bodyColor = [0x2a3f6b, 0x4a2f5e, 0x24405a][Math.floor(rng() * 3)];
+      lit.box(LANE_X[lane], 1.7, trainZ - trainLen / 2, 2.3, 3.4, trainLen, bodyColor);
+      lit.box(LANE_X[lane], 3.35, trainZ - trainLen / 2, 2.0, 0.3, trainLen - 1.2, 0x11162a);
+      // lit window strip
+      for (let wz = 1.5; wz < trainLen - 1; wz += 2.2) {
+        glow.box(LANE_X[lane] + 1.18, 2.5, trainZ - wz, 0.1, 0.7, 1.3, 0xffe9b0);
+        glow.box(LANE_X[lane] - 1.18, 2.5, trainZ - wz, 0.1, 0.7, 1.3, 0xffe9b0);
+      }
+      // headlights
+      glow.box(LANE_X[lane] - 0.6, 1.5, trainZ + 0.1, 0.35, 0.35, 0.2, 0xfff6d0);
+      glow.box(LANE_X[lane] + 0.6, 1.5, trainZ + 0.1, 0.35, 0.35, 0.2, 0xfff6d0);
 
-      const edge = new THREE.Mesh(box(spec.w * 0.95, 0.09, 0.09), glow(0x00e5ff));
-      edge.position.set(0, spec.h / 2 - 0.07, 0);
-      m.add(edge);
+      seg.obstacles.push({ from: seg.startS + z, to: seg.startS + z + trainLen, lane, type: 'train' });
+      placed.push(lane);
+    } else {
+      const count = rng() < 0.55 ? 2 : 1;
+      for (let i = 0; i < count; i++) {
+        const lane = laneSet[i];
+        const t = roll < 0.55 ? 'barrier' : roll < 0.85 ? 'gate' : 'block';
 
-      seg.obstacles.push({ s: seg.startS + z, lane, type: t });
-    }
-
-    // cell trail in the free lane
-    if (rng() < 0.7) {
-      const n = 3 + Math.floor(rng() * 3);
-      for (let i = 0; i < n; i++) {
-        const m = new THREE.Mesh(octa(), glow(0x8cff00));
-        m.position.set(LANE_X[freeLane], 1.15, -(z + 3 + i * 3.4));
-        m.userData.spin = true;
-        g.add(m);
-        seg.cells.push({ s: seg.startS + z + 3 + i * 3.4, lane: freeLane, mesh: m, taken: false });
+        if (t === 'barrier') {
+          lit.box(LANE_X[lane], 0.55, -z, 2.1, 1.1, 0.9, 0xff2e88);
+          glow.box(LANE_X[lane], 1.15, -z, 2.1, 0.14, 0.95, 0xffe0ef);
+          seg.obstacles.push({ from: seg.startS + z - 0.5, to: seg.startS + z + 0.5, lane, type: 'barrier' });
+        } else if (t === 'gate') {
+          for (const sx of [-1, 1]) {
+            lit.box(LANE_X[lane] + sx * 1.0, 1.3, -z, 0.2, 2.6, 0.3, 0x333c5c);
+          }
+          lit.box(LANE_X[lane], 2.75, -z, 2.4, 0.5, 0.5, 0xffb02e);
+          glow.box(LANE_X[lane], 3.05, -z, 2.2, 0.12, 0.55, 0xffd88a);
+          seg.obstacles.push({ from: seg.startS + z - 0.4, to: seg.startS + z + 0.4, lane, type: 'gate' });
+        } else {
+          lit.box(LANE_X[lane], 1.35, -z, 2.2, 2.7, 1.5, 0x2b3566);
+          glow.box(LANE_X[lane], 2.72, -z, 2.2, 0.12, 1.55, 0x00e5ff);
+          seg.obstacles.push({ from: seg.startS + z - 0.8, to: seg.startS + z + 0.8, lane, type: 'block' });
+        }
+        placed.push(lane);
       }
     }
 
-    z += 15 + rng() * 12;
+    // ---- coin arc in the free lane
+    if (rng() < 0.85) {
+      const n = 4 + Math.floor(rng() * 4);
+      for (let i = 0; i < n; i++) {
+        const cz = z + 2 + i * 2.6;
+        const arc = Math.sin((i / Math.max(1, n - 1)) * Math.PI) * 0.9;
+        const coin = new THREE.Mesh(coinGeo, coinMat);
+        coin.position.set(LANE_X[freeLane], 1.2 + arc, -cz);
+        coin.rotation.x = Math.PI / 2;
+        g.add(coin);
+        seg.cells.push({ s: seg.startS + cz, lane: freeLane, mesh: coin, taken: false });
+      }
+    }
+
+    z += 26 + rng() * 16;
   }
+
+  const litMesh = lit.build(litMaterial);
+  if (litMesh) g.add(litMesh);
+  const glowMesh = glow.build(glowMaterial);
+  if (glowMesh) g.add(glowMesh);
 }
 
-let octaGeo = null;
-function octa() {
-  if (!octaGeo) octaGeo = new THREE.OctahedronGeometry(0.34, 0);
-  return octaGeo;
-}
+const coinGeo = new THREE.TorusGeometry(0.42, 0.14, 8, 14);
+const coinMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
