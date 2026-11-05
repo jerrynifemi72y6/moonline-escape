@@ -168,7 +168,7 @@ export function createPath(scene, startS = 0) {
 }
 
 // ---------------------------------------------------------------- segment
-const BUILDING_COLORS = [0x1a1f3d, 0x232a52, 0x171b33, 0x2b2350, 0x1d2a4d];
+const BUILDING_COLORS = [0x2a3157, 0x343d6e, 0x242c4e, 0x3a2f63, 0x2c3a63];
 const WINDOW_COLORS = [0xffd9a0, 0xfff1c4, 0x9fe8ff, 0xffb3e6, 0xb8ffe0];
 
 function buildSegment(scene, seg, container, rng) {
@@ -228,7 +228,7 @@ function buildSegment(scene, seg, container, rng) {
       }
 
       // lit floor bands facing the track
-      const bands = 3 + Math.floor(rng() * 4);
+      const bands = 5 + Math.floor(rng() * 5);
       for (let b = 0; b < bands; b++) {
         const by = 3 + rng() * (h - 6);
         const wc = WINDOW_COLORS[Math.floor(rng() * WINDOW_COLORS.length)];
@@ -236,9 +236,9 @@ function buildSegment(scene, seg, container, rng) {
           bx - side * (w / 2 + 0.05),
           by,
           bz,
-          0.12,
-          0.9,
-          w * (0.55 + rng() * 0.4),
+          0.14,
+          1.15,
+          w * (0.6 + rng() * 0.35),
           wc
         );
       }

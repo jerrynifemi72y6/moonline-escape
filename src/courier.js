@@ -8,11 +8,11 @@ import * as THREE from 'three';
 export function createCourier() {
   const root = new THREE.Group();
 
-  const suitDark = new THREE.MeshLambertMaterial({ color: 0x1b2140 });
-  const suitMid = new THREE.MeshLambertMaterial({ color: 0x2b3566 });
+  const suitDark = new THREE.MeshLambertMaterial({ color: 0x2a3163 });
+  const suitMid = new THREE.MeshLambertMaterial({ color: 0x4a5cc4 });
   const accent = new THREE.MeshLambertMaterial({ color: 0x00e5ff });
   const visor = new THREE.MeshBasicMaterial({ color: 0x7df9ff });
-  const packMat = new THREE.MeshLambertMaterial({ color: 0xff2e88 });
+  const packMat = new THREE.MeshBasicMaterial({ color: 0xff2e88 });
 
   // body pivot (lets us lean the whole figure)
   const body = new THREE.Group();

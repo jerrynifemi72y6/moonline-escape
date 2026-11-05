@@ -9,15 +9,15 @@ scene.background = new THREE.Color(0x0a1026);
 scene.fog = new THREE.Fog(0x241546, 60, 190);
 buildSky(scene);
 
-const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 320);
+const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 1200);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 document.getElementById('app').appendChild(renderer.domElement);
 
 // lights
-scene.add(new THREE.HemisphereLight(0x6b8cff, 0x120f2e, 1.15));
-const moonLight = new THREE.DirectionalLight(0xbfd4ff, 1.3);
+scene.add(new THREE.HemisphereLight(0x8098ff, 0x241a44, 1.5));
+const moonLight = new THREE.DirectionalLight(0xcfe0ff, 1.55);
 moonLight.position.set(-18, 30, 14);
 scene.add(moonLight);
 const rimLight = new THREE.DirectionalLight(0xff2e88, 0.55);
