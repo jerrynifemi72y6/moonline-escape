@@ -248,6 +248,23 @@ surface.addEventListener('touchend', (e) => {
 document.getElementById('playBtn').addEventListener('click', startRun);
 document.getElementById('againBtn').addEventListener('click', startRun);
 
+
+// ---------------------------------------------------------------- test harness
+function autopilot() {
+  for (const sg of path.segments) {
+    for (const obs of sg.obstacles) {
+      const gap = obs.s - player.s;
+      if (gap < 1 || gap > 14) continue;
+      if (obs.lane === player.lane) {
+        if (obs.type === 'barrier') { jump(); return; }
+        if (obs.type === 'gate') { slide(); return; }
+        const free = [0, 1, 2].find((l) => l !== obs.lane);
+        if (free !== undefined) { moveLane(free - player.lane > 0 ? 1 : -1); return; }
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------- gameplay
 const clock = new THREE.Clock();
 
@@ -330,6 +347,8 @@ function updateRun(dt) {
   // ---- world streaming
   path.ensureAhead(player.s, 300);
   path.prune(player.s);
+
+  if (AUTO_TURN) autopilot();
 
   // ---- obstacle collision
   for (const sg of path.segments) {

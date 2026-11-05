@@ -58,7 +58,7 @@ export function createPath(scene, startS = 0) {
     const len = 70 + Math.floor(rng() * 45);
     sinceTurn++;
     // first few segments run straight so the player can settle in
-    const wantTurn = sinceTurn >= 3 && rng() < 0.85;
+    const wantTurn = sinceTurn >= 2 && rng() < 0.85;
     const turn = wantTurn ? (rng() < 0.5 ? 'left' : 'right') : null;
     if (wantTurn) sinceTurn = 0;
 
