@@ -62,6 +62,7 @@ const player = {
 };
 
 let activeSeg = null;
+let cornersTaken = 0;
 let camYaw = 0;
 let camPos = new THREE.Vector3(0, 3.4, 7);
 const camLook = new THREE.Vector3();
@@ -294,7 +295,7 @@ function paintDebug() {
   const seg = path.segmentAt(player.s);
   el.textContent = `s=${player.s.toFixed(1)} lane=${player.lane} x=${player.x.toFixed(2)} spd=${speed.toFixed(1)}
 seg=${seg.startS.toFixed(0)}+${seg.len} turn=${seg.turn || '-'} toEnd=${(seg.startS + seg.len - player.s).toFixed(1)}
-armed=${player.turnArmed || '-'} y=${player.y.toFixed(2)} slide=${player.sliding}`;
+armed=${player.turnArmed || '-'} y=${player.y.toFixed(2)} slide=${player.sliding}\ncorners=${cornersTaken}`;
 }
 
 function updateRun(dt) {
@@ -343,6 +344,7 @@ function updateRun(dt) {
       endRun();
       return;
     }
+    if (activeSeg.turn) cornersTaken++;
     player.turnArmed = null;
     player.lane = 1;
     player.x = 0;
