@@ -61,6 +61,7 @@ const player = {
   turnCrash: false,
 };
 
+let activeSeg = null;
 let camYaw = 0;
 let camPos = new THREE.Vector3(0, 3.4, 7);
 const camLook = new THREE.Vector3();
@@ -118,6 +119,7 @@ function resetRun() {
   player.lean = 0;
 
   camYaw = player.yaw;
+  activeSeg = null;
   speed = BASE_SPEED;
   distance = 0;
   cellCount = 0;
@@ -276,6 +278,23 @@ function collides(obs) {
   return true;
 }
 
+
+const DEBUG = new URLSearchParams(location.search).has('debug');
+function paintDebug() {
+  if (!DEBUG) return;
+  let el = document.getElementById('dbg');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'dbg';
+    el.style.cssText = 'position:fixed;left:8px;bottom:8px;font:11px monospace;color:#8cff00;background:rgba(0,0,0,.6);padding:6px 8px;border-radius:6px;z-index:50;white-space:pre;';
+    document.body.appendChild(el);
+  }
+  const seg = path.segmentAt(player.s);
+  el.textContent = `s=${player.s.toFixed(1)} lane=${player.lane} x=${player.x.toFixed(2)} spd=${speed.toFixed(1)}
+seg=${seg.startS.toFixed(0)}+${seg.len} turn=${seg.turn || '-'} toEnd=${(seg.startS + seg.len - player.s).toFixed(1)}
+armed=${player.turnArmed || '-'} y=${player.y.toFixed(2)} slide=${player.sliding}`;
+}
+
 function updateRun(dt) {
   player.animTime += dt;
   speed = Math.min(MAX_SPEED, BASE_SPEED + distance * 0.011);
@@ -313,13 +332,27 @@ function updateRun(dt) {
     }
   }
 
-  // ---- corner logic
+  // ---- corner logic (crossing detected by segment change)
   const seg = path.segmentAt(player.s);
+
+  if (activeSeg && seg !== activeSeg) {
+    // we just crossed a segment boundary: was a turn required?
+    if (activeSeg.turn && player.turnArmed !== activeSeg.turn) {
+      endRun();
+      return;
+    }
+    player.turnArmed = null;
+    player.lane = 1;
+    player.x = 0;
+    turnHint.classList.add('hidden');
+    turnHint.classList.remove('locked');
+  }
+  activeSeg = seg;
+
   const toEnd = seg.startS + seg.len - player.s;
 
-  if (AUTO_TURN && seg.turn && toEnd < TURN_WINDOW && toEnd > 0) player.turnArmed = seg.turn;
-
   if (seg.turn && toEnd < TURN_WINDOW && toEnd > 0) {
+    if (AUTO_TURN) player.turnArmed = seg.turn;
     turnHint.classList.remove('hidden');
     if (player.turnArmed !== seg.turn) {
       turnHint.textContent = seg.turn === 'left' ? '◀  SWIPE LEFT' : 'SWIPE RIGHT  ▶';
@@ -327,21 +360,6 @@ function updateRun(dt) {
     }
   } else if (!player.turnArmed) {
     turnHint.classList.add('hidden');
-  }
-
-  if (toEnd <= 0.6) {
-    if (player.turnArmed !== seg.turn && seg.turn) {
-      player.turnCrash = true;
-      endRun();
-      return;
-    }
-    if (player.turnArmed) {
-      player.lane = 1;
-      player.x = 0;
-    }
-    player.turnArmed = null;
-    turnHint.classList.add('hidden');
-    turnHint.classList.remove('locked');
   }
 
   // ---- world streaming
@@ -397,6 +415,7 @@ function updateRun(dt) {
 
   updateCamera(dt, worldPos, player.yaw);
   updateHud();
+  paintDebug();
 }
 
 function updateCamera(dt, worldPos, yaw) {
