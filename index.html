@@ -21,16 +21,22 @@ window.addEventListener('error', function (e) {
   <div class="pill score"><span>SCORE</span><b id="hudScore">0</b></div>
 </div>
 
+<div id="turnHint" class="hidden"></div>
+
 <div id="startScreen" class="screen">
   <div class="card">
     <p class="kicker">NEON CITY · SECURITY BLACKOUT</p>
     <h1>MOONLINE<br />ESCAPE</h1>
-    <p class="sub">Run the moonlit rails. Grab the cells. Don't get caught.</p>
+    <p class="sub">Run the moonlit rails. Grab the cells. Take the corners.</p>
     <ul class="hints">
       <li>Swipe left / right to change lane</li>
-      <li>Swipe up to jump</li>
-      <li>Swipe down to slide</li>
+      <li>Swipe up to jump · down to slide</li>
+      <li>Swipe the marked way at a corner</li>
     </ul>
+    <div class="settings">
+      <button id="swapLR" class="ghost">LEFT / RIGHT: NORMAL</button>
+      <button id="swapUD" class="ghost">UP / DOWN: NORMAL</button>
+    </div>
     <button id="playBtn">PLAY</button>
   </div>
 </div>

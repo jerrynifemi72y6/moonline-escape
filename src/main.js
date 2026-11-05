@@ -1,145 +1,131 @@
 import * as THREE from 'three';
-import { buildEnvironment, LANE_X } from './world.js';
+import { createPath, LANE_X } from './path.js';
 import { createCourier, animateCourier } from './courier.js';
 
 // ---------------------------------------------------------------- renderer
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 260);
+scene.background = new THREE.Color(0x0a1026);
+scene.fog = new THREE.Fog(0x0a1026, 50, 135);
 
+const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 320);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 document.getElementById('app').appendChild(renderer.domElement);
 
-const env = buildEnvironment(scene);
+// lights
+scene.add(new THREE.HemisphereLight(0x6b8cff, 0x120f2e, 1.15));
+const moonLight = new THREE.DirectionalLight(0xbfd4ff, 1.3);
+moonLight.position.set(-18, 30, 14);
+scene.add(moonLight);
+const rimLight = new THREE.DirectionalLight(0xff2e88, 0.55);
+rimLight.position.set(16, 10, -22);
+scene.add(rimLight);
 
-// ---------------------------------------------------------------- player
+// ---------------------------------------------------------------- world
+const path = createPath(scene);
 const courier = createCourier();
-const playerGroup = new THREE.Group();
-playerGroup.add(courier.root);
-scene.add(playerGroup);
+scene.add(courier.root);
+
+// ---------------------------------------------------------------- state
+const STATE = { MENU: 0, RUN: 1, OVER: 2 };
+let state = STATE.MENU;
+
+const BASE_SPEED = 17;
+const MAX_SPEED = 33;
+const TURN_WINDOW = 20;
+// test harness: ?auto=1 takes every corner automatically
+const AUTO_TURN = new URLSearchParams(location.search).has('auto');
+
+let speed = BASE_SPEED;
+let distance = 0;
+let cellCount = 0;
+let score = 0;
+let best = Number(localStorage.getItem('moonline.best') || 0);
+let swapLR = localStorage.getItem('moonline.swapLR') === '1';
+let swapUD = localStorage.getItem('moonline.swapUD') === '1';
 
 const player = {
+  s: 6,
   lane: 1,
-  x: LANE_X[1],
+  x: 0,
   y: 0,
   vy: 0,
   sliding: false,
   slideTimer: 0,
   state: 'run',
   animTime: 0,
-  hitTimer: 0,
   lean: 0,
+  yaw: 0,
+  turnArmed: null,   // 'left' | 'right' | null for the upcoming corner
+  turnCrash: false,
 };
 
-// ---------------------------------------------------------------- pools
-const OBSTACLE_TYPES = {
-  barrier: { w: 1.7, h: 1.05, d: 1.0, color: 0xff2e88, y: 0.52 },
-  gate: { w: 2.0, h: 1.5, d: 0.5, color: 0xffb02e, y: 2.25 },
-  block: { w: 2.0, h: 2.7, d: 1.4, color: 0x2b3566, y: 1.35 },
-};
+let camYaw = 0;
+let camPos = new THREE.Vector3(0, 3.4, 7);
+const camLook = new THREE.Vector3();
 
-const materialCache = {};
-function matFor(color) {
-  if (!materialCache[color]) materialCache[color] = new THREE.MeshLambertMaterial({ color });
-  return materialCache[color];
-}
-
-const obstaclePools = {};
-for (const [type, spec] of Object.entries(OBSTACLE_TYPES)) {
-  const pool = [];
-  const geo = new THREE.BoxGeometry(spec.w, spec.h, spec.d);
-  for (let i = 0; i < 8; i++) {
-    const m = new THREE.Mesh(geo, matFor(spec.color));
-    m.visible = false;
-    m.position.set(0, spec.y, -999);
-    scene.add(m);
-    pool.push({ mesh: m, type, active: false, lane: 1, z: 0 });
-  }
-  obstaclePools[type] = pool;
-}
-
-// glowing edge bar so obstacles read at speed
-const edgeGeo = new THREE.BoxGeometry(1, 0.08, 0.08);
-const edgeMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff });
-for (const pool of Object.values(obstaclePools)) {
-  for (const o of pool) {
-    const e = new THREE.Mesh(edgeGeo, edgeMat);
-    e.position.y = OBSTACLE_TYPES[o.type].h / 2 - 0.06;
-    e.scale.x = OBSTACLE_TYPES[o.type].w * 0.95;
-    o.mesh.add(e);
-  }
-}
-
-const cellGeo = new THREE.OctahedronGeometry(0.34, 0);
-const cellMat = new THREE.MeshBasicMaterial({ color: 0x8cff00 });
-const cells = [];
-for (let i = 0; i < 40; i++) {
-  const m = new THREE.Mesh(cellGeo, cellMat);
-  m.visible = false;
-  scene.add(m);
-  cells.push({ mesh: m, active: false, lane: 1, z: 0 });
-}
-
-function acquireObstacle(type) {
-  const pool = obstaclePools[type];
-  const free = pool.find((o) => !o.active);
-  if (!free) return null;
-  free.active = true;
-  free.mesh.visible = true;
-  return free;
-}
-
-function acquireCell() {
-  const free = cells.find((c) => !c.active);
-  if (!free) return null;
-  free.active = true;
-  free.mesh.visible = true;
-  return free;
-}
-
-// ---------------------------------------------------------------- game state
-const STATE = { MENU: 0, RUN: 1, OVER: 2 };
-let state = STATE.MENU;
-
-const BASE_SPEED = 16;
-const MAX_SPEED = 34;
-let speed = BASE_SPEED;
-let distance = 0;
-let cellCount = 0;
-let score = 0;
-let spawnTimer = 0;
-let best = Number(localStorage.getItem('moonline.best') || 0);
-
+// ---------------------------------------------------------------- HUD
 const hudDistance = document.getElementById('hudDistance');
 const hudCells = document.getElementById('hudCells');
 const hudScore = document.getElementById('hudScore');
+const turnHint = document.getElementById('turnHint');
 const startScreen = document.getElementById('startScreen');
 const overScreen = document.getElementById('overScreen');
 const overStats = document.getElementById('overStats');
+const swapLRBtn = document.getElementById('swapLR');
+const swapUDBtn = document.getElementById('swapUD');
 
+function paintSettings() {
+  swapLRBtn.textContent = swapLR ? 'LEFT / RIGHT: SWAPPED' : 'LEFT / RIGHT: NORMAL';
+  swapUDBtn.textContent = swapUD ? 'UP / DOWN: SWAPPED' : 'UP / DOWN: NORMAL';
+}
+paintSettings();
+
+swapLRBtn.addEventListener('click', () => {
+  swapLR = !swapLR;
+  localStorage.setItem('moonline.swapLR', swapLR ? '1' : '0');
+  paintSettings();
+});
+swapUDBtn.addEventListener('click', () => {
+  swapUD = !swapUD;
+  localStorage.setItem('moonline.swapUD', swapUD ? '1' : '0');
+  paintSettings();
+});
+
+function updateHud() {
+  hudDistance.textContent = `${Math.floor(distance)} m`;
+  hudCells.textContent = String(cellCount);
+  hudScore.textContent = String(score);
+}
+
+// ---------------------------------------------------------------- run control
 function resetRun() {
+  path.reset();
+  path.ensureAhead(0, 300);
+
+  player.s = 6;
   player.lane = 1;
-  player.x = LANE_X[1];
+  player.x = 0;
   player.y = 0;
   player.vy = 0;
   player.sliding = false;
   player.slideTimer = 0;
   player.state = 'run';
-  player.hitTimer = 0;
+  player.yaw = path.yawAt(6);
+  player.turnArmed = null;
+  player.turnCrash = false;
   player.lean = 0;
 
+  camYaw = player.yaw;
   speed = BASE_SPEED;
   distance = 0;
   cellCount = 0;
   score = 0;
-  spawnTimer = 0.6;
 
-  for (const pool of Object.values(obstaclePools)) {
-    for (const o of pool) { o.active = false; o.mesh.visible = false; o.z = -999; }
-  }
-  for (const c of cells) { c.active = false; c.mesh.visible = false; c.z = -999; }
-  env.reset();
+  const p = path.positionAt(player.s, 0, 0);
+  courier.root.position.copy(p);
+  camPos.copy(p).add(new THREE.Vector3(Math.sin(camYaw) * -7, 3.4, Math.cos(camYaw) * 7));
   updateHud();
 }
 
@@ -147,12 +133,15 @@ function startRun() {
   resetRun();
   startScreen.classList.add('hidden');
   overScreen.classList.add('hidden');
+  turnHint.classList.add('hidden');
   state = STATE.RUN;
 }
 
 function endRun() {
+  if (state === STATE.OVER) return;
   state = STATE.OVER;
   player.state = 'hit';
+  turnHint.classList.add('hidden');
   if (score > best) {
     best = score;
     localStorage.setItem('moonline.best', String(best));
@@ -165,23 +154,35 @@ function endRun() {
   overScreen.classList.remove('hidden');
 }
 
-function updateHud() {
-  hudDistance.textContent = `${Math.floor(distance)} m`;
-  hudCells.textContent = String(cellCount);
-  hudScore.textContent = String(score);
+// ---------------------------------------------------------------- input
+function laneDelta(dir) {
+  return swapLR ? -dir : dir;
 }
 
-// ---------------------------------------------------------------- input
 function moveLane(dir) {
   if (state !== STATE.RUN || player.state === 'hit') return;
-  player.lane = THREE.MathUtils.clamp(player.lane + dir, 0, 2);
-  player.lean = -dir * 0.35;
+  const seg = path.segmentAt(player.s);
+  const toEnd = seg.startS + seg.len - player.s;
+
+  // near a corner a swipe is a turn command, not a lane change
+  if (seg.turn && toEnd < TURN_WINDOW && toEnd > -1) {
+    if ((dir > 0 && seg.turn === 'right') || (dir < 0 && seg.turn === 'left')) {
+      player.turnArmed = seg.turn;
+      turnHint.textContent = 'TURN LOCKED';
+      turnHint.classList.add('locked');
+      return;
+    }
+    // wrong direction: still allow the lane nudge, but no turn
+  }
+
+  player.lane = THREE.MathUtils.clamp(player.lane + laneDelta(dir), 0, 2);
+  player.lean = -laneDelta(dir) * 0.3;
 }
 
 function jump() {
   if (state !== STATE.RUN || player.state === 'hit') return;
   if (player.y > 0.02 || player.sliding) return;
-  player.vy = 8.6;
+  player.vy = 8.8;
   player.y = 0.03;
   player.state = 'jump';
 }
@@ -189,14 +190,13 @@ function jump() {
 function slide() {
   if (state !== STATE.RUN || player.state === 'hit') return;
   if (player.y > 0.02) {
-    // fast-fall into a slide
-    player.vy = -18;
+    player.vy = -20;
     player.sliding = true;
-    player.slideTimer = 0.7;
+    player.slideTimer = 0.72;
     return;
   }
   player.sliding = true;
-  player.slideTimer = 0.7;
+  player.slideTimer = 0.72;
 }
 
 // keyboard
@@ -221,82 +221,67 @@ surface.addEventListener('touchend', (e) => {
   const t = e.changedTouches[0];
   const dx = t.clientX - touchStart.x;
   const dy = t.clientY - touchStart.y;
-  const dt = performance.now() - touchStart.time;
+  const elapsed = performance.now() - touchStart.time;
   const absX = Math.abs(dx);
   const absY = Math.abs(dy);
+  touchStart = null;
 
   if (Math.max(absX, absY) < 26) {
-    if (dt < 300) {
-      if (state === STATE.MENU) startRun();
-      else if (state === STATE.OVER) startRun();
+    if (elapsed < 300) {
+      if (state === STATE.MENU || state === STATE.OVER) startRun();
       else jump();
     }
-  } else if (absX > absY) {
-    moveLane(dx > 0 ? 1 : -1);
+    return;
+  }
+
+  if (absX > absY) {
+    const dir = dx > 0 ? 1 : -1;
+    moveLane(dir);
   } else {
-    if (dy < 0) jump();
+    const up = dy < 0;
+    const wantsJump = swapUD ? !up : up;
+    if (wantsJump) jump();
     else slide();
   }
-  touchStart = null;
 }, { passive: true });
 
 document.getElementById('playBtn').addEventListener('click', startRun);
 document.getElementById('againBtn').addEventListener('click', startRun);
 
-// ---------------------------------------------------------------- spawning
-function spawnRow() {
-  const difficulty = THREE.MathUtils.clamp(distance / 900, 0, 1);
-  const freeLane = Math.floor(Math.random() * 3);
-  const blocked = [0, 1, 2].filter((l) => l !== freeLane);
-  const count = Math.random() < 0.45 + difficulty * 0.25 ? 2 : 1;
-
-  for (let i = 0; i < count; i++) {
-    const lane = blocked[i];
-    const roll = Math.random();
-    const type = roll < 0.42 ? 'barrier' : roll < 0.76 ? 'gate' : 'block';
-    const o = acquireObstacle(type);
-    if (!o) continue;
-    o.lane = lane;
-    o.z = -105 - Math.random() * 12;
-    o.mesh.position.set(LANE_X[lane], OBSTACLE_TYPES[type].y, o.z);
-  }
-
-  // cell trail in the free lane
-  if (Math.random() < 0.75) {
-    const n = 3 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < n; i++) {
-      const c = acquireCell();
-      if (!c) break;
-      c.lane = freeLane;
-      c.z = -112 - i * 4;
-      c.mesh.position.set(LANE_X[freeLane], 1.15, c.z);
-    }
-  }
-}
-
-// ---------------------------------------------------------------- update
+// ---------------------------------------------------------------- gameplay
 const clock = new THREE.Clock();
 
-function updatePlayer(dt) {
+function collides(obs) {
+  if (obs.lane !== player.lane) return false;
+  if (Math.abs(obs.s - player.s) > 1.7) return false;
+  if (obs.type === 'barrier') return player.y < 1.02;
+  if (obs.type === 'gate') return !(player.sliding && player.y < 0.45);
+  return true;
+}
+
+function updateRun(dt) {
   player.animTime += dt;
+  speed = Math.min(MAX_SPEED, BASE_SPEED + distance * 0.011);
+  player.s += speed * dt;
+  distance = player.s - 6;
+  score = Math.floor(distance) + cellCount * 25;
 
-  // lane glide
-  const targetX = LANE_X[player.lane];
-  player.x += (targetX - player.x) * Math.min(1, dt * 14);
-  player.lean += (0 - player.lean) * Math.min(1, dt * 8);
+  // lane glide (pull to lane centre through an armed corner so the offset
+  // doesn't pop when the corridor changes direction)
+  const segNow = path.segmentAt(player.s);
+  const nearCorner = segNow.turn && player.turnArmed && (segNow.startS + segNow.len - player.s) < 9;
+  const targetX = nearCorner ? 0 : LANE_X[player.lane];
+  player.x += (targetX - player.x) * Math.min(1, dt * 15);
+  player.lean += (0 - player.lean) * Math.min(1, dt * 7);
 
-  // vertical
+  // vertical motion
   if (player.y > 0 || player.vy !== 0) {
-    player.vy -= 24 * dt;
+    player.vy -= 25 * dt;
     player.y += player.vy * dt;
     if (player.y <= 0) {
       player.y = 0;
       player.vy = 0;
-      if (player.sliding) player.state = 'slide';
-      else player.state = 'run';
-    } else if (player.vy < 0 && player.y < 2.2 && player.sliding) {
-      // fast-fall retains slide intent
-      player.state = 'slide';
+      player.state = player.sliding ? 'slide' : 'run';
     } else {
       player.state = 'jump';
     }
@@ -311,131 +296,141 @@ function updatePlayer(dt) {
     }
   }
 
-  if (player.hitTimer > 0) player.hitTimer -= dt;
+  // ---- corner logic
+  const seg = path.segmentAt(player.s);
+  const toEnd = seg.startS + seg.len - player.s;
 
-  playerGroup.position.set(player.x, player.y, 0);
-  playerGroup.rotation.z = player.lean;
-  playerGroup.rotation.y = player.lean * 0.6;
+  if (AUTO_TURN && seg.turn && toEnd < TURN_WINDOW && toEnd > 0) player.turnArmed = seg.turn;
 
-  const speedRatio = (speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED);
-  animateCourier(courier, player.state, player.animTime, THREE.MathUtils.clamp(speedRatio, 0, 1));
-}
-
-function collides(o, type) {
-  const laneMatch = o.lane === player.lane && Math.abs(player.x - LANE_X[o.lane]) < 1.5;
-  const zMatch = Math.abs(o.z) < 1.6;
-  if (!laneMatch || !zMatch) return false;
-
-  // player capsule approximation
-  const playerTop = player.sliding ? 0.95 : player.y + 1.9;
-  const playerBottom = player.sliding ? 0 : player.y;
-
-  if (type === 'barrier') {
-    // low bar: cleared only by being airborne above it
-    return playerBottom < 1.05;
-  }
-  if (type === 'gate') {
-    // overhead gate: clear by sliding under it
-    return !(player.sliding && player.y < 0.4);
-  }
-  // solid block: always
-  return true;
-}
-
-function update(dt) {
-  if (state !== STATE.RUN) {
-    if (state === STATE.MENU) {
-      // idle: character runs in place so the menu is alive
-      player.animTime += dt;
-      animateCourier(courier, 'run', player.animTime, 0.2);
-      env.update(dt, 6);
+  if (seg.turn && toEnd < TURN_WINDOW && toEnd > 0) {
+    turnHint.classList.remove('hidden');
+    if (player.turnArmed !== seg.turn) {
+      turnHint.textContent = seg.turn === 'left' ? '◀  SWIPE LEFT' : 'SWIPE RIGHT  ▶';
+      turnHint.classList.remove('locked');
     }
-    return;
+  } else if (!player.turnArmed) {
+    turnHint.classList.add('hidden');
   }
 
-  speed = Math.min(MAX_SPEED, BASE_SPEED + distance * 0.012);
-  distance += speed * dt;
-  score = Math.floor(distance) + cellCount * 25;
+  if (toEnd <= 0.6) {
+    if (player.turnArmed !== seg.turn && seg.turn) {
+      player.turnCrash = true;
+      endRun();
+      return;
+    }
+    if (player.turnArmed) {
+      player.lane = 1;
+      player.x = 0;
+    }
+    player.turnArmed = null;
+    turnHint.classList.add('hidden');
+    turnHint.classList.remove('locked');
+  }
 
-  env.update(dt, speed);
-  updatePlayer(dt);
+  // ---- world streaming
+  path.ensureAhead(player.s, 300);
+  path.prune(player.s);
 
-  // move + collide obstacles
-  for (const pool of Object.values(obstaclePools)) {
-    for (const o of pool) {
-      if (!o.active) continue;
-      o.z += speed * dt;
-      o.mesh.position.z = o.z;
-
-      if (collides(o, o.type)) {
-        o.active = false;
-        o.mesh.visible = false;
-        o.z = -999;
+  // ---- obstacle collision
+  for (const sg of path.segments) {
+    for (const obs of sg.obstacles) {
+      if (Math.abs(obs.s - player.s) > 2) continue;
+      if (collides(obs)) {
         endRun();
         return;
       }
-      if (o.z > 12) {
-        o.active = false;
-        o.mesh.visible = false;
-        o.z = -999;
+    }
+  }
+
+  // ---- cells
+  for (const sg of path.segments) {
+    for (const c of sg.cells) {
+      if (c.taken) continue;
+      if (Math.abs(c.s - player.s) < 1.5 && c.lane === player.lane) {
+        c.taken = true;
+        c.mesh.visible = false;
+        cellCount++;
+        score += 25;
       }
     }
   }
 
-  // cells
-  for (const c of cells) {
-    if (!c.active) continue;
-    c.z += speed * dt;
-    c.mesh.position.z = c.z;
-    c.mesh.rotation.y += dt * 3;
-    c.mesh.rotation.x += dt * 1.2;
-
-    if (c.z > 10) { c.active = false; c.mesh.visible = false; c.z = -999; continue; }
-
-    if (c.lane === player.lane && Math.abs(c.z) < 1.4 && Math.abs(player.y - 1.15) < 1.5) {
-      c.active = false;
-      c.mesh.visible = false;
-      c.z = -999;
-      cellCount++;
-      score += 25;
+  // animated pickups
+  const t = player.animTime;
+  for (const sg of path.segments) {
+    for (const c of sg.cells) {
+      if (!c.taken) {
+        c.mesh.rotation.y = t * 2.2;
+        c.mesh.rotation.x = t * 0.9;
+      }
     }
   }
 
-  spawnTimer -= dt;
-  if (spawnTimer <= 0) {
-    spawnRow();
-    const gap = THREE.MathUtils.lerp(1.25, 0.72, THREE.MathUtils.clamp(distance / 1200, 0, 1));
-    spawnTimer = gap;
-  }
+  // ---- place the courier
+  const worldPos = path.positionAt(player.s, player.x, player.y);
+  courier.root.position.copy(worldPos);
+  player.yaw = path.yawAt(player.s);
+  courier.root.rotation.y = player.yaw + Math.PI;
+  courier.root.rotation.z = player.lean;
 
+  const ratio = THREE.MathUtils.clamp((speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED), 0, 1);
+  animateCourier(courier, player.state, player.animTime, ratio);
+
+  updateCamera(dt, worldPos, player.yaw);
   updateHud();
-  updateCamera(dt);
 }
 
-const camLook = new THREE.Vector3();
-function updateCamera(dt) {
-  const speedRatio = (speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED);
-  const back = 6.6 + speedRatio * 0.8;
-  const height = 3.3 + speedRatio * 0.35;
-  camera.position.x += (player.x * 0.55 - camera.position.x) * Math.min(1, dt * 6);
-  camera.position.y += (height - camera.position.y) * Math.min(1, dt * 5);
-  camera.position.z += (back - camera.position.z) * Math.min(1, dt * 5);
+function updateCamera(dt, worldPos, yaw) {
+  // shortest-arc yaw smoothing so corners swing instead of snapping
+  let diff = yaw - camYaw;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  camYaw += diff * Math.min(1, dt * 7);
 
-  camLook.set(player.x * 0.5, 1.35 + player.y * 0.35, -7);
+  const speedRatio = THREE.MathUtils.clamp((speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED), 0, 1);
+  const back = 6.8 + speedRatio * 0.9;
+  const height = 3.5 + speedRatio * 0.3;
+
+  const targetPos = new THREE.Vector3(
+    worldPos.x - Math.sin(camYaw) * back,
+    height + worldPos.y * 0.35,
+    worldPos.z + Math.cos(camYaw) * back
+  );
+  camPos.lerp(targetPos, Math.min(1, dt * 9));
+  camera.position.copy(camPos);
+
+  camLook.set(
+    worldPos.x + Math.sin(camYaw) * 8,
+    1.5 + worldPos.y * 0.4,
+    worldPos.z - Math.cos(camYaw) * 8
+  );
   camera.lookAt(camLook);
 }
 
-// ---------------------------------------------------------------- loop
+function updateMenu(dt) {
+  player.animTime += dt;
+  animateCourier(courier, 'run', player.animTime, 0.25);
+  const worldPos = path.positionAt(player.s, 0, 0);
+  courier.root.position.copy(worldPos);
+  courier.root.rotation.y = player.yaw + Math.PI;
+  updateCamera(dt, worldPos, player.yaw);
+}
+
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  update(dt);
+  if (state === STATE.RUN) updateRun(dt);
+  else if (state === STATE.MENU) updateMenu(dt);
+  else if (state === STATE.OVER) {
+    // let the stumble read, keep the camera alive
+    player.animTime += dt;
+    animateCourier(courier, 'hit', player.animTime, 0);
+    const worldPos = path.positionAt(player.s, player.x, player.y);
+    updateCamera(dt, worldPos, player.yaw);
+  }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
 
-// initial camera placement
-camera.position.set(0, 3.3, 6.6);
-camera.lookAt(0, 1.35, -7);
 resetRun();
 overScreen.classList.add('hidden');
 frame();
