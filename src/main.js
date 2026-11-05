@@ -256,12 +256,14 @@ function autopilot() {
   for (const sg of path.segments) {
     for (const obs of sg.obstacles) {
       const gap = obs.s - player.s;
-      if (gap < 1 || gap > 14) continue;
+      if (gap < 1) continue;
       if (obs.lane === player.lane) {
-        if (obs.type === 'barrier') { jump(); return; }
-        if (obs.type === 'gate') { slide(); return; }
-        const free = [0, 1, 2].find((l) => l !== obs.lane);
-        if (free !== undefined) { moveLane(free - player.lane > 0 ? 1 : -1); return; }
+        if (obs.type === 'barrier' && gap < 7.5) { jump(); return; }
+        if (obs.type === 'gate' && gap < 7) { slide(); return; }
+        if (obs.type === 'block' && gap < 26) {
+          const free = [0, 2, 1].find((l) => l !== obs.lane);
+          if (free !== undefined) { moveLane(free > player.lane ? 1 : -1); return; }
+        }
       }
     }
   }
